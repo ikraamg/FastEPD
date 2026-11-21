@@ -1627,16 +1627,34 @@ static void IRAM_ATTR bbepRowControl(FASTEPDSTATE *pState, int iType)
     return;
 } /* bbepRowControl() */
 
+// Set when a row transfer fails or never finishes; the rest of the update is skipped
+static volatile bool bRowFailed = false;
+
+#ifndef __LINUX__
+int bbepEinkPower(FASTEPDSTATE *pState, int bOn);
+#define ROW_DONE_TIMEOUT_US 50000 // a row takes about 40 us
+
+static void bbepFailRowAndPowerOff(FASTEPDSTATE *pState)
+{
+    bRowFailed = true;
+    dma_is_done = true;
+    gpio_set_level((gpio_num_t)pState->panelDef.ioCKV, 0);
+    bbepEinkPower(pState, 0);
+}
+
 // The data needs to come from a DMA buffer or the Espressif DMA driver
 // will allocate (and leak) an internal buffer each time
-#ifndef __LINUX__
 static void IRAM_ATTR bbepWriteRow(FASTEPDSTATE *pState, uint8_t *pData, int iLen, int bRowStep)
 {
     esp_err_t err;
-    
-//    Serial.printf("bbepWriteRow %d bytes\n", iLen);
-    
+    int iWaitUs = 0;
+
+    if (bRowFailed) return;
     while (!dma_is_done) {
+        if (++iWaitUs > ROW_DONE_TIMEOUT_US) {
+            bbepFailRowAndPowerOff(pState);
+            return;
+        }
         delayMicroseconds(1);
     }
     if (bRowStep) {
@@ -1675,7 +1693,7 @@ static void IRAM_ATTR bbepWriteRow(FASTEPDSTATE *pState, uint8_t *pData, int iLe
     err = esp_lcd_panel_io_tx_color(io_handle, iRowCMD, pData, iLen + pState->panelDef.iLinePadding);
 #endif // S3/C5
     if (err != ESP_OK) {
-       // Serial.printf("Error %d sending row data\n", (int)err);
+        bbepFailRowAndPowerOff(pState);
     }
 //    while (!dma_is_done) {
 //        delayMicroseconds(1);
@@ -2656,6 +2674,7 @@ int iPasses;
 int bbepEinkPower(FASTEPDSTATE *pState, int bOn)
 {
     if (!pState->pfnEinkPower) return BBEP_ERROR_BAD_PARAMETER;
+    if (bOn) bRowFailed = false;
 
     return (*(pState->pfnEinkPower))(pState, bOn);
 } /* bbepEinkPower() */
@@ -3229,6 +3248,7 @@ int bbepFullUpdate(FASTEPDSTATE *pState, int iClearMode, bool bKeepOn, BB_RECT *
     // Set the drivers inside epaper panel into discharge state.
     bbepClear(pState, BB_CLEAR_NEUTRAL, 1, pRect);
     if (!bKeepOn) bbepEinkPower(pState, 0);
+    if (bRowFailed) return BBEP_IO_ERROR;
     
 #ifdef SHOW_TIME
     l = millis() - l;
