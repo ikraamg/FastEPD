@@ -842,7 +842,15 @@ int vcom;
         bbepPCA9535DigitalWrite(11, 1); // PWRUP on
         bbepPCA9535DigitalWrite(12, 1); // VCOM CTRL on
         vTaskDelay(3); // allow time to power up
-        while (!(bbepPCA9535DigitalRead(14))) { } // CFG_PIN_PWRGOOD
+        int iWaitTicks = 0;
+        while (!(bbepPCA9535DigitalRead(14))) { // CFG_PIN_PWRGOOD
+            if (++iWaitTicks >= 400) {
+                pState->pwr_on = 1; // so the power off below is not skipped
+                EPDiyV7EinkPower(pBBEP, 0);
+                return BBEP_IO_ERROR;
+            }
+            vTaskDelay(1);
+        }
 
         //ucTemp[0] = TPS_REG_UPSEQ0;
         //ucTemp[1] = 0xe1;
@@ -875,7 +883,8 @@ int vcom;
             vTaskDelay(1);
         }
         if (iTimeout >= 400) {
-            // Serial.println("The power_good signal never arrived!");
+            pState->pwr_on = 1; // so the power off below is not skipped
+            EPDiyV7EinkPower(pBBEP, 0);
             return BBEP_IO_ERROR;
         }
         pState->pwr_on = 1;
