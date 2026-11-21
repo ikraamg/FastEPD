@@ -1224,6 +1224,8 @@ int EPDiyV7IOInit(void *pBBEP)
     bbepPinMode(pState->panelDef.ioCL, OUTPUT);
     bbepI2CInit((uint8_t)pState->panelDef.ioSDA, (uint8_t)pState->panelDef.ioSCL, pState->bit_bang);
     memset(ioRegs, 0, sizeof(ioRegs)); // copy of IO expander registers
+    pState->pwr_on = 1; // drive the supplies low before the pins become outputs; they reset high
+    EPDiyV7EinkPower(pBBEP, 0);
     for (int i=8; i<14; i++) { // set lower 6 bits as outputs
         bbepPCA9535PinMode(i, OUTPUT);
     }
